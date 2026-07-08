@@ -1,0 +1,361 @@
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://nika.sh/spec/v1/workflow.schema.json
+#
+# beyond-benchmarks · the benchmark that rides production.
+#
+# Leaderboards are static · your traffic is not. This file IS a live eval loop ·
+#   1. three probes cut from real production traffic (billing email · incident
+#      ticket · FR-locale payment note), each with a DETERMINISTIC oracle
+#   2. one task block per (model × probe) — the roster is explicit, reviewable, pinned
+#   3. every model answers every probe · jq grades — zero LLM in the grading path
+#   4. scoreboard on disk + drift diff vs the last known-good run (baseline.json)
+#
+# Audited BEFORE a token is spent (nika check · cost ceiling · default-deny permits).
+# A dead provider scores as a MISS, not a crash — unreachability IS an eval finding.
+# Offline · `nika test` runs the whole DAG under the mock provider · $0.00 · zero wifi.
+nika: v1
+workflow: beyond-benchmarks
+description: "production probes × model roster → deterministic scoreboard + drift diff"
+
+model: mock/echo                     # grading path never infers · probe models are pinned per task
+
+permits:                             # default-deny boundary · via `nika check --infer-permits`
+  fs:
+    read: ["./baseline.json"]
+    write: ["./scoreboard.json", "./scoreboard.md"]
+  exec: false
+  tools: ["nika:jq", "nika:json_diff", "nika:read", "nika:write"]
+
+# ── the probes · instruction + the production payload, verbatim ─────────────
+vars:
+  p_extract: |
+    From this billing email, report the invoice total in euros and the
+    payment deadline as a calendar date (year, month, day).
+    Email · Bonjour, veuillez trouver ci-joint la facture F-2026-0712 émise
+    par Datacenter Lutèce. Montant total : 1 834,50 € TTC, payable avant le
+    2026-08-15 par virement. Cordialement, Service facturation.
+
+  p_triage: |
+    Triage this production incident ticket. Assign a severity from P1
+    (full outage, all hands) down to P4 (cosmetic), and state whether
+    customers are impacted right now.
+    Ticket · Prod API returns 500 on /checkout since 14:02 CEST. Payments
+    failing for all EU customers. Error log shows "connection pool
+    exhausted". On-call paged, status page not yet updated.
+
+  p_locale: |
+    From this payment note, report the amount the customer paid and the
+    amount refunded, both as integer cents.
+    Note · Le client a réglé 12,50 € par carte ; nous lui avons remboursé
+    3,05 € de frais de port.
+
+tasks:
+  # ══ ollama/llama3.2:3b · local · zero key · the sovereignty floor ══════════
+  - id: llama_extract
+    on_error: { recover: null }      # a down provider is a MISS · the eval lives
+    infer:
+      model: ollama/llama3.2:3b
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_extract }}
+      schema:
+        type: object
+        required: [total_eur, due_date]
+        additionalProperties: false
+        properties:
+          total_eur: { type: number, description: "invoice total in euros" }
+          due_date: { type: string, description: "payment deadline, year-month-day" }
+
+  - id: llama_triage
+    on_error: { recover: null }
+    infer:
+      model: ollama/llama3.2:3b
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_triage }}
+      schema:
+        type: object
+        required: [severity, customer_facing]
+        additionalProperties: false
+        properties:
+          severity: { type: string, enum: [P1, P2, P3, P4] }
+          customer_facing: { type: boolean }
+
+  - id: llama_locale
+    on_error: { recover: null }
+    infer:
+      model: ollama/llama3.2:3b
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_locale }}
+      schema:
+        type: object
+        required: [paid_cents, refunded_cents]
+        additionalProperties: false
+        properties:
+          paid_cents: { type: integer }
+          refunded_cents: { type: integer }
+
+  # ══ gemini/gemini-2.5-flash · the cheap cloud tier ════════════════════════
+  - id: gemini_extract
+    on_error: { recover: null }
+    infer:
+      model: gemini/gemini-2.5-flash
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_extract }}
+      schema:
+        type: object
+        required: [total_eur, due_date]
+        additionalProperties: false
+        properties:
+          total_eur: { type: number, description: "invoice total in euros" }
+          due_date: { type: string, description: "payment deadline, year-month-day" }
+
+  - id: gemini_triage
+    on_error: { recover: null }
+    infer:
+      model: gemini/gemini-2.5-flash
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_triage }}
+      schema:
+        type: object
+        required: [severity, customer_facing]
+        additionalProperties: false
+        properties:
+          severity: { type: string, enum: [P1, P2, P3, P4] }
+          customer_facing: { type: boolean }
+
+  - id: gemini_locale
+    on_error: { recover: null }
+    infer:
+      model: gemini/gemini-2.5-flash
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_locale }}
+      schema:
+        type: object
+        required: [paid_cents, refunded_cents]
+        additionalProperties: false
+        properties:
+          paid_cents: { type: integer }
+          refunded_cents: { type: integer }
+
+  # ══ xai/grok-3 · the frontier-adjacent tier ═════════════════════════════
+  - id: grok_extract
+    on_error: { recover: null }
+    infer:
+      model: xai/grok-3
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_extract }}
+      schema:
+        type: object
+        required: [total_eur, due_date]
+        additionalProperties: false
+        properties:
+          total_eur: { type: number, description: "invoice total in euros" }
+          due_date: { type: string, description: "payment deadline, year-month-day" }
+
+  - id: grok_triage
+    on_error: { recover: null }
+    infer:
+      model: xai/grok-3
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_triage }}
+      schema:
+        type: object
+        required: [severity, customer_facing]
+        additionalProperties: false
+        properties:
+          severity: { type: string, enum: [P1, P2, P3, P4] }
+          customer_facing: { type: boolean }
+
+  - id: grok_locale
+    on_error: { recover: null }
+    infer:
+      model: xai/grok-3
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_locale }}
+      schema:
+        type: object
+        required: [paid_cents, refunded_cents]
+        additionalProperties: false
+        properties:
+          paid_cents: { type: integer }
+          refunded_cents: { type: integer }
+
+  # ══ openai/gpt-4o-mini · the mid tier ═════════════════════════════════════
+  # roster candidates parked tonight · mistral/mistral-small-latest + openrouter/auto
+  #   (no key on this laptop) · anthropic/claude-haiku-4-5 (key out of credits) ·
+  #   ollama/qwen3.5:4b (thinking budget wants max_tokens ≥2000 · slower but stronger)
+  - id: gpt_extract
+    on_error: { recover: null }
+    infer:
+      model: openai/gpt-4o-mini
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_extract }}
+      schema:
+        type: object
+        required: [total_eur, due_date]
+        additionalProperties: false
+        properties:
+          total_eur: { type: number, description: "invoice total in euros" }
+          due_date: { type: string, description: "payment deadline, year-month-day" }
+
+  - id: gpt_triage
+    on_error: { recover: null }
+    infer:
+      model: openai/gpt-4o-mini
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_triage }}
+      schema:
+        type: object
+        required: [severity, customer_facing]
+        additionalProperties: false
+        properties:
+          severity: { type: string, enum: [P1, P2, P3, P4] }
+          customer_facing: { type: boolean }
+
+  - id: gpt_locale
+    on_error: { recover: null }
+    infer:
+      model: openai/gpt-4o-mini
+      max_tokens: 400
+      temperature: 0
+      prompt: ${{ vars.p_locale }}
+      schema:
+        type: object
+        required: [paid_cents, refunded_cents]
+        additionalProperties: false
+        properties:
+          paid_cents: { type: integer }
+          refunded_cents: { type: integer }
+
+  # ══ the grading · deterministic oracles · jq, not vibes ═══════════════════
+  - id: score
+    depends_on: [llama_extract, llama_triage, llama_locale,
+                 gemini_extract, gemini_triage, gemini_locale,
+                 grok_extract, grok_triage, grok_locale,
+                 gpt_extract, gpt_triage, gpt_locale]
+    invoke:
+      tool: "nika:jq"
+      args:
+        input:
+          models: ["ollama/llama3.2:3b", "gemini/gemini-2.5-flash",
+                   "xai/grok-3", "openai/gpt-4o-mini"]
+          extract:
+            - "${{ tasks.llama_extract.output }}"
+            - "${{ tasks.gemini_extract.output }}"
+            - "${{ tasks.grok_extract.output }}"
+            - "${{ tasks.gpt_extract.output }}"
+          triage:
+            - "${{ tasks.llama_triage.output }}"
+            - "${{ tasks.gemini_triage.output }}"
+            - "${{ tasks.grok_triage.output }}"
+            - "${{ tasks.gpt_triage.output }}"
+          locale:
+            - "${{ tasks.llama_locale.output }}"
+            - "${{ tasks.gemini_locale.output }}"
+            - "${{ tasks.grok_locale.output }}"
+            - "${{ tasks.gpt_locale.output }}"
+        expression: |
+          . as $r
+          | [ {probe: "invoice_extract",
+               checks: ($r.extract | map(. != null and .total_eur == 1834.5 and .due_date == "2026-08-15"))},
+              {probe: "incident_triage",
+               checks: ($r.triage | map(. != null and .severity == "P1" and .customer_facing == true))},
+              {probe: "locale_money",
+               checks: ($r.locale | map(. != null and .paid_cents == 1250 and .refunded_cents == 305))} ] as $probes
+          | [range($r.models | length)] | map(. as $i
+              | {model: $r.models[$i],
+                 passed: ([$probes[].checks[$i] | select(.)] | length),
+                 total: ($probes | length),
+                 failed: [$probes[] | select(.checks[$i] | not) | .probe]})
+
+  # ══ persistence · scoreboard for humans + machines ════════════════════════
+  - id: render_json
+    depends_on: [score]
+    invoke:
+      tool: "nika:jq"
+      args:
+        input: ${{ tasks.score.output }}
+        expression: "tojson"
+
+  - id: write_json
+    depends_on: [render_json]
+    invoke:
+      tool: "nika:write"
+      args:
+        path: "./scoreboard.json"
+        content: ${{ tasks.render_json.output }}
+        overwrite: true
+
+  - id: render_md
+    depends_on: [score]
+    invoke:
+      tool: "nika:jq"
+      args:
+        input: ${{ tasks.score.output }}
+        expression: |
+          ["| model | score | failed probes |", "|---|---|---|"]
+          + map("| " + .model + " | " + (.passed | tostring) + "/" + (.total | tostring)
+                + " | " + (if .failed == [] then "—" else (.failed | join(" · ")) end) + " |")
+          | join("\n")
+
+  - id: write_md
+    depends_on: [render_md]
+    invoke:
+      tool: "nika:write"
+      args:
+        path: "./scoreboard.md"
+        content: ${{ tasks.render_md.output }}
+        overwrite: true
+
+  # ══ the drift sentinel · today vs the last known-good run ═════════════════
+  - id: read_baseline
+    on_error: { recover: null }      # first run · no baseline yet · drift reports it
+    invoke:
+      tool: "nika:read"
+      args:
+        path: "./baseline.json"
+
+  - id: drift
+    depends_on: [score, read_baseline]
+    invoke:
+      tool: "nika:jq"
+      args:
+        input:
+          baseline: ${{ tasks.read_baseline.output }}
+          current: ${{ tasks.score.output }}
+        expression: |
+          (.baseline
+           | if . == null then null
+             elif type == "string" then (try fromjson catch null)
+             else . end) as $b
+          | if $b == null
+            then {status: "NO BASELINE — first run · cp scoreboard.json baseline.json to arm the sentinel"}
+            elif $b == .current
+            then {status: "no drift — every model scores exactly as baselined"}
+            else {status: "DRIFT DETECTED",
+                  changes: [.current[] as $c
+                            | (first($b[] | select(.model == $c.model)) // null) as $old
+                            | select($old != null and $old.passed != $c.passed)
+                            | {model: $c.model, was: "\($old.passed)/\($old.total)",
+                               now: "\($c.passed)/\($c.total)",
+                               probes_now_failing: ($c.failed - $old.failed)}]}
+            end
+
+outputs:
+  scoreboard:
+    value: ${{ tasks.score.output }}
+    type: array
+    description: "per-model pass/fail over the production probes"
+  drift:
+    value: ${{ tasks.drift.output }}
+    description: "diff vs baseline.json — the silent-regression alarm"

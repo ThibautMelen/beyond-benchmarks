@@ -1,0 +1,1 @@
+[{"failed":["incident_triage"],"model":"ollama/llama3.2:3b","passed":2,"total":3},{"failed":[],"model":"gemini/gemini-2.5-flash","passed":3,"total":3},{"failed":["incident_triage"],"model":"xai/grok-3","passed":2,"total":3},{"failed":[],"model":"openai/gpt-4o-mini","passed":3,"total":3}]
