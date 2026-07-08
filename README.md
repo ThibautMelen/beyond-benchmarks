@@ -1,114 +1,149 @@
 # beyond-benchmarks
 
-**The benchmark that rides production.** One auditable workflow file: probes cut
-from real traffic, graded by deterministic oracles, cost-capped *before* a single
-token is spent, and diffed against the last known-good run.
+A leaderboard won't page you when a provider silently updates its weights.
+This file will.
 
-Built for — and live-run at — the [AI Tinkerers Paris](https://paris.aitinkerers.org/)
-closed-door dinner [**Beyond Benchmarks: Evaluating Models in Production**](https://paris.aitinkerers.org/p/beyond-benchmarks-a-closed-door-dinner-on-evaluating-models-in-production)
-(Paris, July 8th 2026 · sponsored by [OpenRouter](https://openrouter.ai)).
+Three probes cut from production traffic. Four pinned models. Deterministic
+oracles. A scoreboard on disk, diffed against the last run you trusted. Put it
+on cron and silent regressions stop being silent.
 
-Written in [Nika](https://nika.sh) — a workflow language for AI where the file is
-audited before it runs (`nika: v1` · [spec](https://github.com/supernovae-st/nika-spec) Apache-2.0 ·
-[engine](https://github.com/supernovae-st/nika) AGPL-3.0 · [docs](https://docs.nika.sh)).
+Live-run at the [AI Tinkerers Paris](https://paris.aitinkerers.org/) closed-door
+dinner [Beyond Benchmarks: Evaluating Models in Production](https://paris.aitinkerers.org/p/beyond-benchmarks-a-closed-door-dinner-on-evaluating-models-in-production)
+on July 8th, 2026, sponsored by [OpenRouter](https://openrouter.ai). Written in
+[Nika](https://nika.sh), a workflow language for AI where the file is audited
+before it runs.
 
-## Why
+The grading path contains zero LLM calls. jq, not vibes.
 
-Leaderboard performance is increasingly disconnected from real-world reliability
-— the dinner's exact premise. This file answers its four table themes with
-running code instead of slides:
+```text
+🦋 nika · beyond-benchmarks · 19 tasks
+   permits ✓ declared boundary · default-deny
 
-| Dinner theme | What the file does |
-|---|---|
-| **Live evaluation systems** | the probes ARE production traffic snippets; every run leaves a tamper-evident trace (`nika trace verify`) — your eval dataset accumulates for free |
-| **Routing as a primitive** | the model roster is explicit, pinned, reviewable — 4 providers in one file; adding `openrouter/auto` or any of 38 catalog providers is one block |
-| **Model drift in practice** | `baseline.json` + a diff task = a drift sentinel; cron the run and silent regressions page you |
-| **Cost vs. reliability** | `nika check` prints a per-task price ladder before any spend; `--max-cost-usd` blocks *before* the call that would cross it; `≥` markers refuse the local-is-free lie |
+✔  llama_extract   infer · ollama/llama3.2:3b       3.0s ∥
+✔  llama_triage    infer · ollama/llama3.2:3b       3.8s ∥
+✔  llama_locale    infer · ollama/llama3.2:3b       4.5s ∥
+✔  gemini_extract  infer · gemini/gemini-2.5-flash  1.4s ∥
+✔  gemini_triage   infer · gemini/gemini-2.5-flash  2.0s ∥
+✔  gemini_locale   infer · gemini/gemini-2.5-flash  1.5s ∥
+✔  grok_extract    infer · xai/grok-3               2.8s · $0.001362 ∥
+✔  grok_triage     infer · xai/grok-3               7.0s · $0.001215 ∥
+✔  grok_locale     infer · xai/grok-3               2.5s · $0.001137 ∥
+✔  gpt_extract     infer · openai/gpt-4o-mini       1.3s · $0.000034 ∥
+✔  gpt_triage      infer · openai/gpt-4o-mini       1.2s · $0.000029 ∥
+✔  gpt_locale      infer · openai/gpt-4o-mini       1.3s · $0.000024 ∥
+✔  score           invoke · nika:jq                  0ms
+✔  render_json     invoke · nika:jq                  0ms ∥
+✔  write_json      invoke · nika:write               1ms ∥
+✔  render_md       invoke · nika:jq                  0ms ∥
+✔  write_md        invoke · nika:write               1ms ∥
+✔  read_baseline   invoke · nika:read                0ms ∥
+✔  drift           invoke · nika:jq                  0ms ∥
+── 19/19 done · ≥ $0.003802 (6 unpriced) · elapsed 7.0s ────────
+```
 
-## The scoreboard it produced on dinner night
+One verdict costs $0.004 and takes seven seconds.
 
-Four models × three probes (FR-locale invoice extraction · incident triage ·
-comma-decimal money parsing), graded by jq oracles — **zero LLM in the grading
-path**. Run on 2026-07-08, temperature pinned to 0:
+## The dinner-night scoreboard
 
 | model | score | failed probes |
 |---|---|---|
 | ollama/llama3.2:3b | 2/3 | incident_triage |
-| gemini/gemini-2.5-flash | 3/3 | — |
+| gemini/gemini-2.5-flash | 3/3 | none |
 | xai/grok-3 | 2/3 | incident_triage |
-| openai/gpt-4o-mini | 3/3 | — |
+| openai/gpt-4o-mini | 3/3 | none |
 
-Three real exhibits from that run:
+Three conversations this table started:
 
-- **grok-3** — priced ~40× gpt-4o-mini and ~95% of the run's metered cost —
-  called a full EU payments outage `"severity": "P2"`. Defensible, but the
-  oracle encodes *your* severity bar, not the model's opinion.
-- **llama3.2:3b** nailed the French comma-decimal total (`1 834,50 €` → `1834.5`)
-  but hallucinated `due_date: "2024-04-01"` — a date that appears nowhere in the
-  email. Failure modes are per-capability, not per-model-size.
-- Before temperature was pinned, the drift sentinel caught **llama3.2:3b flipping
-  a probe between two runs 46 seconds apart** — same file, same machine, pure
-  sampling variance. If two consecutive runs do that, imagine a silent
-  provider-side weight update.
+**grok-3 ate 97% of the metered cost and lost to a model 40x cheaper.**
+It read a full EU payments outage and answered `"severity": "P2"`. Defensible.
+Wrong for us. The oracle encodes your severity bar, not the model's opinion.
+
+**llama3.2:3b parsed the French comma-decimal, then invented a date.**
+`1 834,50 €` came back as `1834.5`, correct. The payment deadline came back as
+`"2024-04-01"`, a date that appears nowhere in the email. Small models fail per
+capability, not per size.
+
+**The drift sentinel fired 46 seconds after it was armed.** Before temperature
+was pinned to 0, two consecutive runs on the same machine flipped the locale
+probe. Pure sampling variance. Picture a silent weight update on a provider
+carrying 30% of your traffic:
+
+```json
+{"status": "DRIFT DETECTED",
+ "changes": [{"model": "ollama/llama3.2:3b", "was": "1/3", "now": "2/3",
+              "probes_now_failing": ["locale_money"]}]}
+```
+
+## The audit, before a single token
+
+`nika check` prices every task, verifies the permit boundary, and traces
+information flow. Statically. Refusal is cheaper than regret.
+
+```text
+ ✔ PLAN     4 wave(s) · 19 task(s) · max parallelism 13
+   grok_extract  xai/grok-3  ≤400 tk  $0.0060
+   gpt_extract  openai/gpt-4o-mini  ≤400 tk  $0.0002
+ ✔ SECRETS  no information-flow escapes
+ ✔ PERMITS  body fits the declared boundary
+ ✔ audited · 19 task(s) · 4 wave(s) · permits declared · est ≥$0.0187 · 0 hints
+```
+
+The permits are default-deny: this file may read `baseline.json`, write the two
+scoreboard files, and call four named builtins. Nothing else. `exec` is off.
+Local models are marked unpriced with a `≥` floor instead of a fake `$0.00`.
 
 ## Run it
 
 ```bash
-brew install supernovae-st/homebrew-nika/nika   # or see https://docs.nika.sh
-ollama pull llama3.2:3b                          # the local leg (zero key)
+brew install supernovae-st/homebrew-nika/nika
+ollama pull llama3.2:3b
 export GEMINI_API_KEY=... XAI_API_KEY=... OPENAI_API_KEY=...
 
-nika check beyond-benchmarks.nika.yaml           # audit: waves · permits · cost ladder
+nika check beyond-benchmarks.nika.yaml
 nika run beyond-benchmarks.nika.yaml --max-cost-usd 0.25
 cat scoreboard.md
 ```
 
-The whole run costs well under a cent metered (~$0.004 on dinner night, grok-3
-being most of it) and takes ~5 seconds.
+`--max-cost-usd` blocks before the call that would cross the budget, not after.
 
-Arm the drift sentinel, then re-run any time (cron it — that's the point):
+## Arm the sentinel
 
 ```bash
 cp scoreboard.json baseline.json
 nika run beyond-benchmarks.nika.yaml --max-cost-usd 0.25
-# → drift: "no drift — every model scores exactly as baselined"
-#   ...until a provider silently changes something under you.
 ```
 
-### No keys / no network
+Every run now ends with a verdict: scores match the baseline, or a diff naming
+the model, the probe, and both scores. Cron the run. That verdict is your pager.
+
+## No keys, no network
 
 ```bash
-nika test beyond-benchmarks.nika.yaml   # mock provider · golden-pinned · $0.00
+nika test beyond-benchmarks.nika.yaml
 ```
 
-### What the audit shows before a token is spent
-
-```text
- ✔ PLAN     4 wave(s) · 19 task(s) · max parallelism 13
- ⚠ COST     $0.0187 FLOOR — per-task ladder · unpriced local marked, never $0.00-faked
- ✔ SECRETS  no information-flow escapes
- ✔ PERMITS  body fits the declared boundary   (fs: 1 read · 2 writes · exec: false)
-```
+Runs the whole DAG under the mock provider against a committed golden file.
+Deterministic, offline, $0.00.
 
 ## Make it yours
 
-- **Swap the probes** — paste your own traffic snippet into `vars:`, give the
-  task a schema and a one-line jq oracle. The discipline is one deterministic
-  oracle per probe; probes are cheap rows.
-- **Swap the roster** — each model is one pinned task block. Parked candidates
-  are noted in the file (mistral, `openrouter/auto`, anthropic — add a key, copy
-  a block).
-- **Cron it** — the run is idempotent, the trace is append-only, the drift task
-  is your pager.
+- **Probes.** Paste your own traffic snippet into `vars:`, give the task a
+  schema and a one-line jq oracle. Probes are cheap rows; the discipline is
+  one deterministic oracle per probe.
+- **Roster.** Each model is one pinned task block. Candidates parked in the
+  file: `mistral/mistral-small-latest`, `openrouter/auto`, anthropic. Add a
+  key, copy a block. The catalog has 38 providers.
+- **Cadence.** The run is idempotent and every run leaves a tamper-evident
+  trace (`nika trace verify`). Your eval dataset accumulates for free.
 
 ## Links
 
-- Event · [Beyond Benchmarks — AI Tinkerers Paris](https://paris.aitinkerers.org/p/beyond-benchmarks-a-closed-door-dinner-on-evaluating-models-in-production)
-- Community · [AI Tinkerers Paris](https://paris.aitinkerers.org/)
+- Event · [Beyond Benchmarks, AI Tinkerers Paris](https://paris.aitinkerers.org/p/beyond-benchmarks-a-closed-door-dinner-on-evaluating-models-in-production)
+- Community · [paris.aitinkerers.org](https://paris.aitinkerers.org/)
 - Sponsor · [OpenRouter](https://openrouter.ai)
-- Nika · [nika.sh](https://nika.sh) · [docs.nika.sh](https://docs.nika.sh) · [engine](https://github.com/supernovae-st/nika) · [spec](https://github.com/supernovae-st/nika-spec) · [install](https://github.com/supernovae-st/homebrew-nika)
+- Nika · [nika.sh](https://nika.sh) · [docs](https://docs.nika.sh) · [engine](https://github.com/supernovae-st/nika) · [spec](https://github.com/supernovae-st/nika-spec) · [brew tap](https://github.com/supernovae-st/homebrew-nika)
 
 ## License
 
-Apache-2.0 — same as the Nika workflow spec. The scoreboards committed here are
-the real outputs from dinner night, kept as evidence.
+Apache-2.0, same as the Nika workflow spec. The scoreboards committed here are
+the real dinner-night outputs, kept as evidence.
